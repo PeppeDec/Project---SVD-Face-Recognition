@@ -62,7 +62,7 @@ def train_classifier(X_train_pca, y_train):
 
 
 if __name__ == "__main__":
-    # Carica dataset
+    # Carica dataset_yale
     dataset_path = "dataset"
     images, labels = load_dataset(dataset_path)
 
