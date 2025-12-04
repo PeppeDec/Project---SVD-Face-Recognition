@@ -70,7 +70,7 @@ def predict_single_from_test(idx,
     plt.show()
 
 # 1. Carico Yale
-X, y, img_shape, label_map = load_yale_faces("../Prova2/dataset_yale")
+X, y, img_shape, label_map = load_yale_faces("/dataset_yale")
 print("Shape X:", X.shape)
 print("Shape y:", y.shape)
 print("img_shape:", img_shape)

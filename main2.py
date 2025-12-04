@@ -78,7 +78,7 @@ def predict_1nn(Z_train: np.ndarray,
     return np.array(y_pred, dtype=int)
 
 
-X, y, img_shape, label_map = load_att_faces("dataset")
+X, y, img_shape, label_map = load_att_faces("DataSet_Uno")
 print("Shape X:", X.shape)      # (400, 10304)
 print("Shape y:", y.shape)      # (400,)
 print("img_shape:", img_shape)  # (h, w)
