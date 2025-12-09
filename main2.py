@@ -1,6 +1,107 @@
 import numpy as np
+import os
+from pathlib import Path
+from PIL import Image
+from skimage import exposure
 import matplotlib.pyplot as plt
+from sklearn.decomposition import TruncatedSVD
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split, StratifiedKFold
+from sklearn.svm import SVC
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+import seaborn as sns
+from tqdm import tqdm
+import gc
+import time
+import warnings
 
+warnings.filterwarnings('ignore')
+
+
+class SmartDatasetSelector:
+    """Selettore intelligente del dataset basato su distribuzione campioni"""
+
+    @staticmethod
+    def analyze_dataset(dataset_path):
+        """Analizza la distribuzione del dataset"""
+        print(f"\n{'=' * 70}")
+        print(f"ANALISI DATASET")
+        print(f"{'=' * 70}")
+
+        identity_folders = sorted([f for f in Path(dataset_path).iterdir() if f.is_dir()])
+
+        distribution = []
+        for folder in tqdm(identity_folders, desc="Analisi identità"):
+            n_images = len(list(folder.glob("*.jpg")) +
+                           list(folder.glob("*.png")) +
+                           list(folder.glob("*.jpeg")))
+            distribution.append({
+                'folder': folder,
+                'name': folder.name,
+                'count': n_images
+            })
+
+        distribution = sorted(distribution, key=lambda x: x['count'], reverse=True)
+        counts = [d['count'] for d in distribution]
+
+        print(f"\n📊 STATISTICHE DATASET:")
+        print(f"   • Identità totali: {len(identity_folders)}")
+        print(f"   • Immagini totali: {sum(counts):,}")
+        print(f"   • Media immagini/identità: {np.mean(counts):.1f}")
+        print(f"   • Mediana: {np.median(counts):.0f}")
+        print(f"   • Min: {min(counts)}, Max: {max(counts)}")
+        print(f"\n📈 DISTRIBUZIONE:")
+        print(f"   • Con ≥100 immagini: {sum(1 for c in counts if c >= 100)}")
+        print(f"   • Con ≥50 immagini: {sum(1 for c in counts if c >= 50)}")
+        print(f"   • Con ≥30 immagini: {sum(1 for c in counts if c >= 30)}")
+        print(f"   • Con ≥20 immagini: {sum(1 for c in counts if c >= 20)}")
+        print(f"   • Con <20 immagini: {sum(1 for c in counts if c < 20)}")
+
+        return distribution
+
+    @staticmethod
+    def suggest_configuration(distribution, target_identities=None, min_samples=30):
+        """Suggerisce configurazione ottimale basata sul dataset"""
+        counts = [d['count'] for d in distribution]
+
+        # Filtra per min_samples
+        valid_identities = [d for d in distribution if d['count'] >= min_samples]
+
+        if target_identities:
+            selected = valid_identities[:target_identities]
+        else:
+            selected = valid_identities
+
+        if len(selected) == 0:
+            print(f"\n⚠️  ERRORE: Nessuna identità con ≥{min_samples} immagini!")
+            return None
+
+        selected_counts = [d['count'] for d in selected]
+        total_images = sum(selected_counts)
+
+        # Stima memoria (approssimativa)
+        img_size_kb = 112 * 112 * 4 / 1024  # float32
+        estimated_mb = (total_images * img_size_kb) / 1024
+
+        print(f"\n💡 CONFIGURAZIONE SUGGERITA:")
+        print(f"   • Identità selezionate: {len(selected)}")
+        print(f"   • Immagini totali: {total_images:,}")
+        print(f"   • Media img/identità: {np.mean(selected_counts):.1f}")
+        print(f"   • Min img/identità: {min(selected_counts)}")
+        print(f"   • Memoria stimata: ~{estimated_mb:.0f} MB")
+
+        if estimated_mb > 3000:
+            print(f"   ⚠️  Memoria alta! Considera di ridurre identità o IMG_SIZE")
+        elif estimated_mb < 600:
+            print(f"   ✅ Ottimo! Hai margine per aumentare identità o IMG_SIZE")
+        else:
+            print(f"   ✅ Configurazione bilanciata per 16GB RAM")
+
+        return selected
+
+
+class FaceRecognitionSVD:
+    """Sistema Face Recognition ottimizzato con selezione intelligente"""
 
     def __init__(self, dataset_path, img_size=(112, 112), n_components=300):
         self.dataset_path = Path(dataset_path)
@@ -166,8 +267,8 @@ import matplotlib.pyplot as plt
         print(f"   • Class weight: balanced")
 
         svm = SVC(
-            kernel='rbf',
-            C=10.0,
+            kernel='linear',
+            C=1.0,
             gamma='scale',
             cache_size=1000,
             class_weight='balanced',
@@ -358,7 +459,7 @@ def main():
     print(" " * 8 + "FACE RECOGNITION: SELEZIONE INTELLIGENTE DATASET")
     print("=" * 70 + "\n")
 
-    DATASET_PATH = "../Prova4/dataset"  # Percorso del tuo dataset
+    DATASET_PATH = "/Users/giuseppe/PycharmProjects/Project---SVD-Face-Recognition/DataSet_Tre/dataset"  # Percorso del tuo dataset
 
 
     # ========================================================================
@@ -379,10 +480,10 @@ def main():
     # OPZIONI DISPONIBILI (scegli una strategia):
 
     # STRATEGIA 1: MASSIMA ACCURACY (CONSIGLIATA)
-    TARGET_IDENTITIES = None  # Usa tutte quelle valide
-    MIN_SAMPLES = 35  # Solo identità ben rappresentate
+    TARGET_IDENTITIES = 200  # Più identità (sfruttiamo 16GB)
+    MIN_SAMPLES = 70  # Identità comunque ben rappresentate
     BALANCE_CLASSES = True  # Bilancia campioni per classe
-    SAMPLES_PER_IDENTITY = 60  # Max campioni per identità (per bilanciamento)
+    SAMPLES_PER_IDENTITY = 90  # Più campioni per identità (dataset più grande)
 
     # STRATEGIA 2: DATASET GRANDE
     # TARGET_IDENTITIES = 300
@@ -398,7 +499,7 @@ def main():
 
     # Parametri tecnici
     IMG_SIZE = (112, 112)  # Buon compromesso qualità/memoria
-    N_COMPONENTS = 300  # Componenti SVD
+    N_COMPONENTS = 100  # Componenti SVD
     TARGET_VARIANCE = 0.95  # Target varianza spiegata
     TEST_SIZE = 0.25  # 25% per test
 
