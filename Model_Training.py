@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from sklearn.decomposition import TruncatedSVD
 from sklearn.preprocessing import StandardScaler, Normalizer
 from sklearn.model_selection import train_test_split, cross_val_score, GroupKFold
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, precision_recall_fscore_support
 
 from sklearn.svm import SVC
 from sklearn.linear_model import LogisticRegression, RidgeClassifier
@@ -551,6 +551,141 @@ class SVDTopKFaceRecognition:
         print(f"\n✅ Salvato: {out}")
         plt.close()
 
+    # -------------------------
+    # Evaluate ALL 5 model families (fixed baselines)
+    # -------------------------
+    def _five_baseline_models(self):
+        """Return exactly 5 baseline models (one per family).
+
+        Families:
+          1) Linear SVM
+          2) RBF SVM
+          3) Logistic Regression
+          4) Ridge Classifier
+          5) kNN
+
+        Note: hyperparameters are chosen to be reasonable defaults given your current grid.
+        You can tweak them in CONFIG (see main) if you want.
+        """
+        cfg = getattr(self, "baseline_cfg", {}) or {}
+
+        svm_lin_C = float(cfg.get("SVM_LINEAR_C", 3.0))
+        svm_rbf_C = float(cfg.get("SVM_RBF_C", 3.0))
+        svm_rbf_gamma = cfg.get("SVM_RBF_GAMMA", "scale")
+        logreg_C = float(cfg.get("LOGREG_C", 3.0))
+        ridge_alpha = float(cfg.get("RIDGE_ALPHA", 3.0))
+        knn_k = int(cfg.get("KNN_K", 1))
+
+        return [
+            (
+                f"SVM-linear(C={svm_lin_C})",
+                SVC(kernel='linear', C=svm_lin_C, class_weight='balanced', cache_size=3000, random_state=42)
+            ),
+            (
+                f"SVM-RBF(C={svm_rbf_C},gamma={svm_rbf_gamma})",
+                SVC(kernel='rbf', C=svm_rbf_C, gamma=svm_rbf_gamma, class_weight='balanced', cache_size=3000, random_state=42)
+            ),
+            (
+                f"LogReg(C={logreg_C})",
+                LogisticRegression(
+                    max_iter=5000,
+                    solver='saga',
+                    multi_class='multinomial',
+                    C=logreg_C,
+                    class_weight='balanced',
+                    n_jobs=-1,
+                    random_state=42
+                )
+            ),
+            (
+                f"Ridge(alpha={ridge_alpha})",
+                RidgeClassifier(alpha=ridge_alpha, class_weight='balanced')
+            ),
+            (
+                f"kNN(k={knn_k})",
+                KNeighborsClassifier(n_neighbors=knn_k, weights='distance', metric='minkowski', p=2, n_jobs=-1)
+            ),
+        ]
+
+    def evaluate_all_five_models(self, X_train, y_train, X_test, y_test, out_csv_path="results/all_models_metrics.csv"):
+        """Train + evaluate 5 model families on the SAME split and export a CSV.
+
+        Metrics exported:
+          - accuracy
+          - balanced_accuracy
+          - precision/recall/f1 (weighted)
+          - precision/recall/f1 (macro)
+          - train_time_sec
+          - test_infer_time_sec
+        """
+        out_csv_path = Path(out_csv_path)
+        out_csv_path.parent.mkdir(parents=True, exist_ok=True)
+
+        rows = []
+        models = self._five_baseline_models()
+
+        print(f"\n{'=' * 70}")
+        print("VALUTAZIONE 5 MODELLI (SPLIT FISSO)")
+        print(f"{'=' * 70}")
+
+        for name, model in models:
+            print(f"\n▶ {name}")
+            # Train
+            t0 = time.time()
+            model.fit(X_train, y_train)
+            train_time = time.time() - t0
+
+            # Predict (test)
+            t1 = time.time()
+            y_pred = model.predict(X_test)
+            infer_time = time.time() - t1
+
+            acc = float(accuracy_score(y_test, y_pred))
+            bacc = float(balanced_accuracy_score(y_test, y_pred))
+
+            p_w, r_w, f1_w, _ = precision_recall_fscore_support(
+                y_test, y_pred, average='weighted', zero_division=0
+            )
+            p_m, r_m, f1_m, _ = precision_recall_fscore_support(
+                y_test, y_pred, average='macro', zero_division=0
+            )
+
+            row = {
+                "model": name,
+                "accuracy": acc,
+                "balanced_accuracy": bacc,
+                "precision_weighted": float(p_w),
+                "recall_weighted": float(r_w),
+                "f1_weighted": float(f1_w),
+                "precision_macro": float(p_m),
+                "recall_macro": float(r_m),
+                "f1_macro": float(f1_m),
+                "train_time_sec": float(train_time),
+                "test_infer_time_sec": float(infer_time),
+            }
+            rows.append(row)
+
+            print(f"   • Accuracy:          {acc * 100:.2f}%")
+            print(f"   • Balanced Accuracy: {bacc * 100:.2f}%")
+            print(f"   • F1 (weighted):     {float(f1_w) * 100:.2f}%")
+            print(f"   • F1 (macro):        {float(f1_m) * 100:.2f}%")
+            print(f"   • Train time:        {train_time:.2f}s")
+            print(f"   • Infer time (test): {infer_time:.2f}s")
+
+        # Sort by accuracy desc
+        rows_sorted = sorted(rows, key=lambda d: d["accuracy"], reverse=True)
+
+        # Save CSV
+        fieldnames = list(rows_sorted[0].keys()) if rows_sorted else []
+        with open(out_csv_path, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=fieldnames)
+            w.writeheader()
+            for r in rows_sorted:
+                w.writerow(r)
+
+        print(f"\n✅ Salvato CSV metriche 5 modelli: {out_csv_path}")
+        return rows_sorted
+
 
 # =========================
 #  DATASET ANALYSIS
@@ -647,7 +782,7 @@ def main():
     print("=" * 70 + "\n")
 
     # 👇 CAMBIA QUI (deve puntare alla cartella che contiene le cartelle identità)
-    DATASET_PATH = "/Users/giuseppe/PycharmProjects/Project---SVD-Face-Recognition/DataSet_Quattro/dataset"
+    DATASET_PATH = "/Users/giuseppe/PycharmProjects/Project---SVD-Face-Recognition/DataSet_Tre/dataset"
 
     CONFIG = {
         'N_IDENTITIES': 250,
@@ -657,6 +792,18 @@ def main():
         'N_COMPONENTS': 400,        # prova 300/400/600
         'SVD_N_ITER': 7,            # prova 7/10/15
         'TEST_SIZE': 0.20,
+
+        # Baseline hyperparams for the 5-family comparison CSV
+        'BASELINE_SVM_LINEAR_C': 3.0,
+        'BASELINE_SVM_RBF_C': 3.0,
+        'BASELINE_SVM_RBF_GAMMA': 'scale',
+        'BASELINE_LOGREG_C': 3.0,
+        'BASELINE_RIDGE_ALPHA': 3.0,
+        'BASELINE_KNN_K': 1,
+
+        # Export CSV with metrics for all 5 model families
+        'EXPORT_ALL_MODELS_CSV': True,
+        'ALL_MODELS_CSV_PATH': 'results/all_models_metrics.csv',
 
         # Model persistence
         'BUNDLE_PATH': BUNDLE_PATH_DEFAULT,
@@ -746,6 +893,23 @@ def main():
 
     del X_train, X_test
     gc.collect()
+
+    # 6b) Evaluate and export CSV for all 5 baseline model families (optional)
+    system.baseline_cfg = {
+        "SVM_LINEAR_C": CONFIG.get('BASELINE_SVM_LINEAR_C', 3.0),
+        "SVM_RBF_C": CONFIG.get('BASELINE_SVM_RBF_C', 3.0),
+        "SVM_RBF_GAMMA": CONFIG.get('BASELINE_SVM_RBF_GAMMA', 'scale'),
+        "LOGREG_C": CONFIG.get('BASELINE_LOGREG_C', 3.0),
+        "RIDGE_ALPHA": CONFIG.get('BASELINE_RIDGE_ALPHA', 3.0),
+        "KNN_K": CONFIG.get('BASELINE_KNN_K', 1),
+    }
+
+    if CONFIG.get('EXPORT_ALL_MODELS_CSV', True):
+        system.evaluate_all_five_models(
+            X_train_svd, y_train,
+            X_test_svd, y_test,
+            out_csv_path=CONFIG.get('ALL_MODELS_CSV_PATH', 'results/all_models_metrics.csv')
+        )
 
     # 7) Tune + train classifier
     best_name, best_model, cv_mean, cv_rows = system.tune_and_train(
